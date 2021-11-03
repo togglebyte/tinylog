@@ -93,7 +93,10 @@ async fn start_log(mut agent: Agent<Address, Address>) {
                     Request::Tail(count, filter) => {
                         let tail = logger.tail(count, filter).into_iter().map(serde_json::to_vec).filter_map(Result::ok);
                         for bytes in tail {
-                            let _ = agent.send_remote(Some(sender), &bytes);
+                            if let Err(e) = agent.send_remote(Some(sender), &bytes).await {
+                                print_error!(module_path!(), "Failed to send entry: {}", e);
+                                continue;
+                            }
                         }
                     }
                     Request::Subscribe(_) => {}
@@ -102,19 +105,23 @@ async fn start_log(mut agent: Agent<Address, Address>) {
                         let bytes = match serde_json::to_vec(&saved_entry) {
                             Ok(b) => b,
                             Err(e) => {
-                                print_error!(module_path!(), "Failed to serizlie entry: {}", e);
+                                print_error!(module_path!(), "Failed to serialize entry: {}", e);
                                 continue;
                             }
                         };
                         let subs = subscribers.iter().filter_map(|(s, filter)| 
                             match filter {
-                                None => Some(s),
-                                Some(f) if f.apply(saved_entry) => Some(s),
+                                None => Some(*s),
+                                Some(f) if f.apply(saved_entry) => Some(*s),
                                 Some(_) => None
                             }
-                        );
+                        )
+                        .collect::<Vec<_>>();
 
-                        let _ = agent.send_remote(subs.copied(), &bytes);
+                        if let Err(e) = agent.send_remote(subs, &bytes).await {
+                            print_error!(module_path!(), "Failed to send entry: {}", e);
+                            continue;
+                        }
                     }
                 }
             }

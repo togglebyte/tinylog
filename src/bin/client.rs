@@ -60,7 +60,9 @@ async fn main() -> anyhow::Result<()> {
     let filter = filter_from_args();
 
     loop {
-        let _ = run(config.clone(), filter.clone()).await;
+        if let Err(e) = run(config.clone(), filter.clone()).await {
+            print_error!(module_path!(), "Failed to start log client: {}", e);
+        }
     }
 }
 

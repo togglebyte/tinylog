@@ -63,9 +63,9 @@ pub fn with_prompt(color: Color, prompt: &str, module_path: &str, s: std::fmt::A
     let mut stdout = StandardStream::stdout(ColorChoice::Always);
     stdout.set_color(ColorSpec::new().set_fg(Some(color))).unwrap();
 
-    let _ = write!(&mut stdout, "{} ", prompt);
-    let _ = stdout.reset();
-    let _ = writeln!(&mut stdout, "{} | {}", module_path, s);
+    write!(&mut stdout, "{} ", prompt).expect("failed to write to stdout");
+    stdout.reset().expect("failed to write to stdout");
+    writeln!(&mut stdout, "{} | {}", module_path, s).expect("failed to write to stdout");
 }
 
 /// Filter log messages
@@ -265,8 +265,8 @@ impl LogClient {
     }
 
     pub async fn recv(&mut self) -> Result<LogEntry<Saved>> {
-        let bytes = self.rx.recv_async().await.map_err(|e| tinyroute::errors::Error::RecvErr(e))?;
-        let entry =  serde_json::from_slice::<LogEntry<Saved>>(&bytes)?;
+        let bytes = self.rx.recv_async().await.map_err(tinyroute::errors::Error::RecvErr)?;
+        let entry = serde_json::from_slice::<LogEntry<Saved>>(&bytes)?;
         Ok(entry)
     }
 
@@ -293,7 +293,9 @@ impl Log for TinyLogger {
                 format!("{}", record.args()),
             );
 
-            drop(self.client.lock().map(|mut c| c.send(Request::Log(log_entry))));
+            let res = self.client.lock().map(|mut c| c.send(Request::Log(log_entry)));
+
+            eprintln!("{:?}", res);
         }
     }
 
@@ -321,8 +323,8 @@ pub async fn init_logger_async() -> anyhow::Result<()> {
 }
 
 pub async fn init_logger() -> anyhow::Result<()> {
-    // let client = LogClient::connect_tcp("127.0.0.1:5566").await;
-    let client = LogClient::connect_uds("/tmp/tinylog.sock").await;
+    let client = LogClient::connect_tcp("127.0.0.1:5566").await;
+    // let client = LogClient::connect_uds("/tmp/tinylog.sock").await;
     let tiny_logger = Box::new(TinyLogger { client: std::sync::Mutex::new(client) });
     let tiny_logger = Box::leak(tiny_logger);
 
