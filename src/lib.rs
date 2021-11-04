@@ -271,7 +271,7 @@ impl LogClient {
     }
 
     pub fn try_recv(&mut self) -> Result<LogEntry<Saved>> {
-        let bytes = self.rx.try_recv().map_err(|e| tinyroute::errors::Error::TryRecvErr(e))?;
+        let bytes = self.rx.try_recv().map_err(tinyroute::errors::Error::TryRecvErr)?;
         Ok(serde_json::from_slice::<LogEntry<Saved>>(&bytes)?)
     }
 }
@@ -293,9 +293,9 @@ impl Log for TinyLogger {
                 format!("{}", record.args()),
             );
 
-            let res = self.client.lock().map(|mut c| c.send(Request::Log(log_entry)));
-
-            eprintln!("{:?}", res);
+            if let Err(e) = self.client.lock().map(|mut c| c.send(Request::Log(log_entry))) {
+                eprintln!("Failed to aquire client lock: {}", e);
+            }
         }
     }
 
