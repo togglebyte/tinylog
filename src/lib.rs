@@ -1,14 +1,15 @@
-use std::io::Write;
+use std::io::Write as _;
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
+pub use log::{Level, LevelFilter};
+use log::{Log, Metadata, Record};
 use serde::{Deserialize, Serialize};
 use termcolor::{ColorChoice, ColorSpec, StandardStream, WriteColor};
 use tinyroute::client::{connect, Client, ClientMessage, ClientReceiver, ClientSender, TcpClient, UdsClient};
 use tinyroute::frame::Frame;
-use tinyroute::{Agent, Message, ToAddress};
-use log::{Record, Metadata, Log};
-pub use log::{Level, LevelFilter};
+use tinyroute::{Agent, Message, ToAddress, sleep};
 
 pub use termcolor::Color;
 
@@ -17,6 +18,9 @@ mod errors;
 
 pub use crate::errors::{Error, Result};
 
+// -----------------------------------------------------------------------------
+//     - Internal printing macros -
+// -----------------------------------------------------------------------------
 #[macro_export]
 macro_rules! print_log {
     ($lvl:expr, $module_path:expr, $($arg:tt)*) => ({
@@ -77,10 +81,7 @@ pub struct Filter {
 
 impl Filter {
     pub fn empty() -> Filter {
-        Filter {
-            level: None,
-            modules: Vec::new(),
-        }
+        Filter { level: None, modules: Vec::new() }
     }
 
     pub fn apply(&self, entry: &LogEntry<Saved>) -> bool {
@@ -118,6 +119,8 @@ pub struct LogEntry<T> {
     pub message: String,
     pub module: String,
     pub timestamp: DateTime<Local>,
+    pub file: Option<String>,
+    pub line: Option<u32>,
     state: T,
 }
 
@@ -128,19 +131,20 @@ impl LogEntry<Saved> {
             message.truncate(120);
         }
 
-        let f = format!(
-            "{:04} | {} | {}",
-            self.state.0,
-            self.timestamp.format("%H:%M:%S"),
-            message
-        );
+        let mut output = format!("{:04} | {}", self.state.0, self.timestamp.format("%H:%M:%S"));
+
+        if let (Some(file), Some(line)) = (&self.file, self.line) {
+            write!(&mut output, "| {}:{}", file, line).expect("Failed to write to a string?!?!");
+        }
+
+        write!(&mut output, "| {}", message).expect("Failed to write to a string?!?!");
 
         match self.level {
-            Level::Error => print_error!(&self.module, "{}", f),
-            Level::Warn => print_warn!(&self.module, "{}", f),
-            Level::Info => print_info!(&self.module, "{}", f),
-            Level::Debug => print_info!(&self.module, "{}", f),
-            Level::Trace => print_info!(&self.module, "{}", f),
+            Level::Error => print_error!(&self.module, "{}", output),
+            Level::Warn => print_warn!(&self.module, "{}", output),
+            Level::Info => print_info!(&self.module, "{}", output),
+            Level::Debug => print_info!(&self.module, "{}", output),
+            Level::Trace => print_info!(&self.module, "{}", output),
         }
     }
 }
@@ -152,17 +156,27 @@ impl LogEntry<Unsaved> {
             message: self.message,
             timestamp: self.timestamp,
             module: self.module,
+            line: self.line,
+            file: self.file,
             state: Saved(id),
         }
     }
 
-    pub fn new(level: Level, module: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(
+        level: Level,
+        module: impl Into<String>,
+        message: impl Into<String>,
+        file: Option<String>,
+        line: Option<u32>,
+    ) -> Self {
         Self {
             timestamp: Local::now(),
             level,
             state: Unsaved,
             module: module.into(),
             message: message.into(),
+            file,
+            line,
         }
     }
 }
@@ -224,7 +238,7 @@ impl LogClient {
                     }
                     Err(e) => {
                         print_error!(module_path!(), "Failed to connect: {}", e);
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        sleep(Duration::from_secs(1)).await;
                     }
                 }
             }
@@ -244,7 +258,7 @@ impl LogClient {
                     }
                     Err(e) => {
                         print_error!(module_path!(), "Failed to connect: {}", e);
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        sleep(Duration::from_secs(1)).await;
                     }
                 }
             }
@@ -291,6 +305,8 @@ impl Log for TinyLogger {
                 record.level(),
                 record.module_path().unwrap_or("").to_string(),
                 format!("{}", record.args()),
+                record.file().map(|s| s.into()),
+                record.line(),
             );
 
             if let Err(e) = self.client.lock().map(|mut c| c.send(Request::Log(log_entry))) {

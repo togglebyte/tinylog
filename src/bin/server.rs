@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::fs::remove_file;
 
 use tinyroute::server::{Listener, Server, TcpListener, UdsListener};
-use tinyroute::{Agent, Message, Router, ToAddress};
-use tokio::task::JoinHandle;
+use tinyroute::{Agent, Message, Router, ToAddress, spawn, block_on};
+use tinyroute::task::JoinHandle;
 
 use tinylog::config::Config;
 use tinylog::{print_error, LogEntry, Request, Saved, Filter, Unsaved};
@@ -142,7 +142,7 @@ async fn spawn_server<L: Listener + Send + 'static>(
 
     let server = Server::new(listener, server_agent);
 
-    let server_handle = tokio::spawn(async move {
+    let server_handle = spawn(async move {
         let mut id = match upper_half {
             true => usize::MAX / 2,
             false => 0,
@@ -164,7 +164,7 @@ async fn spawn_server<L: Listener + Send + 'static>(
 // -----------------------------------------------------------------------------
 async fn spawn_uds(router: &mut Router<Address>, socket_path: &str) -> anyhow::Result<JoinHandle<()>> {
     let _ = remove_file(socket_path);
-    let listener = UdsListener::bind(socket_path)?;
+    let listener = UdsListener::bind(socket_path).await?;
     spawn_server(router, listener, Address::UdsServer, false).await
 }
 
@@ -179,8 +179,7 @@ async fn spawn_tcp(router: &mut Router<Address>, addr: &str) -> anyhow::Result<J
 // -----------------------------------------------------------------------------
 //     - Main -
 // -----------------------------------------------------------------------------
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn async_main() -> anyhow::Result<()> {
     // Config
     let config = Config::new()?;
     config.print();
@@ -209,11 +208,16 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    tokio::spawn(start_log(log_agent));
+    let handle = spawn(start_log(log_agent));
     router.run().await;
     for handle in server_handles {
-        handle.await?;
+        let _ = handle.await;
     }
+    let _ = handle.await;
 
     Ok(())
+}
+
+fn main() {
+    let _ = block_on(async_main());
 }

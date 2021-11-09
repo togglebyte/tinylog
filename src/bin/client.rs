@@ -1,5 +1,6 @@
 use tinylog::config::Config;
 use tinylog::{print_error, Filter, LevelFilter, Request};
+use tinyroute::{spawn, block_on};
 
 async fn start_client(mut client: tinylog::LogClient, filter: Option<Filter>) -> anyhow::Result<()> {
     client.send(Request::Subscribe(filter.clone()))?;
@@ -20,7 +21,7 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
         let filter = filter.clone();
         if config.enable_tcp {
             match config.tcp_addr {
-                Some(addr) => handles.push(tokio::spawn(async move {
+                Some(addr) => handles.push(spawn(async move {
                     let cli = tinylog::LogClient::connect_tcp(&addr).await;
                     if let Err(e) = start_client(cli, filter).await {
                         print_error!(module_path!(), "Failed to start log client: {}", e);
@@ -35,7 +36,7 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
     // Only enable the uds client if the tcp client is disabled
     if config.enable_uds && !config.enable_tcp {
         match config.socket {
-            Some(socket) => handles.push(tokio::spawn(async move {
+            Some(socket) => handles.push(spawn(async move {
                 let cli = tinylog::LogClient::connect_uds(&socket).await;
                 if let Err(e) = start_client(cli, filter).await {
                     print_error!(module_path!(), "Failed to start log client: {}", e);
@@ -46,14 +47,13 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
     }
 
     for handle in handles {
-        handle.await?;
+        let _ = handle.await;
     }
 
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn async_main() -> anyhow::Result<()> {
     let config = Config::new()?;
     config.print();
 
@@ -90,4 +90,8 @@ fn filter_from_args() -> Option<Filter> {
     }
 
     Some(filter)
+}
+
+fn main() {
+    let _ = block_on(async_main());
 }

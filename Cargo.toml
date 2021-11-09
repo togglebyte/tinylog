@@ -3,7 +3,11 @@ name = "tinylog"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = []
+tokio_rt = ["tinyroute/tokio_rt"]
+async_std_rt = ["tinyroute/async_std_rt"]
+smol_rt = ["tinyroute/smol_rt"]
 
 [dependencies]
 anyhow = "1.0.44"
@@ -15,6 +19,4 @@ serde = { version = "1.0.130", features = ["derive"] }
 serde_json = "1.0.68"
 termcolor = "1.1.2"
 thiserror = "1.0.29"
-# tinyroute = { git = "https://github.com/togglebyte/tinyroute" }
-tinyroute = { path = "../tinyroute" }
-tokio = { version = "1.12.0", features = ["full"] }
+tinyroute = { git = "https://github.com/togglebyte/tinyroute" }
