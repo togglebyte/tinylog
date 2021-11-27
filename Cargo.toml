@@ -5,9 +5,9 @@ edition = "2021"
 
 [features]
 default = []
-tokio_rt = ["tinyroute/tokio_rt"]
-async_std_rt = ["tinyroute/async_std_rt"]
-smol_rt = ["tinyroute/smol_rt"]
+tokio-rt = ["tinyroute/tokio-rt", "tinyroute-websockets/tokio-rt"]
+async-std-rt = ["tinyroute/async-std-rt",  "tinyroute-websockets/async-std-rt"]
+smol-rt = ["tinyroute/smol-rt",   "tinyroute-websockets/smol-rt"]
 
 [dependencies]
 anyhow = "1.0.44"
@@ -19,4 +19,6 @@ serde = { version = "1.0.130", features = ["derive"] }
 serde_json = "1.0.68"
 termcolor = "1.1.2"
 thiserror = "1.0.29"
-tinyroute = { git = "https://github.com/togglebyte/tinyroute" }
+# tinyroute = { git = "https://github.com/togglebyte/tinyroute" }
+tinyroute = { path = "../tinyroute" }
+tinyroute-websockets = { path = "../tinyroute-websockets" }

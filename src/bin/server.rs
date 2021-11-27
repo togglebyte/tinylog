@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
 use std::fs::remove_file;
 
-use tinyroute::server::{Listener, Server, TcpListener, UdsListener};
+use tinyroute::server::{Connections, Server, TcpConnections, UdsConnections, TcpListener};
 use tinyroute::{Agent, Message, Router, ToAddress, spawn, block_on};
 use tinyroute::task::JoinHandle;
+use tinyroute_websockets::Server as WsServer;
 
 use tinylog::config::Config;
 use tinylog::{print_error, LogEntry, Request, Saved, Filter, Unsaved};
@@ -52,6 +53,8 @@ pub enum Address {
     TcpServer,
     UdsServer,
     Con(usize),
+    WebsocketServer,
+    WebsocketCon(usize),
 }
 
 impl ToAddress for Address {
@@ -128,19 +131,20 @@ async fn start_log(mut agent: Agent<Address, Address>) {
             Message::AgentRemoved(address) => subscribers.retain(|(addr, _)| addr != &address),
             Message::Value(_, _) => {}
             Message::Shutdown => break,
+            Message::Fetch(_) => {}
         }
     }
 }
 
-async fn spawn_server<L: Listener + Send + 'static>(
+async fn spawn_server<C: Connections + Send + 'static>(
     router: &mut Router<Address>,
-    listener: L,
+    connections: C,
     address: Address,
     upper_half: bool,
 ) -> anyhow::Result<JoinHandle<()>> {
-    let server_agent = router.new_agent(1024, address)?;
+    let server_agent = router.new_agent(None, address)?;
 
-    let server = Server::new(listener, server_agent);
+    let server = Server::new(connections, server_agent);
 
     let server_handle = spawn(async move {
         let mut id = match upper_half {
@@ -150,6 +154,27 @@ async fn spawn_server<L: Listener + Send + 'static>(
         let address_gen = || {
             id += 1;
             Address::Con(id)
+        };
+        if let Err(e) = server.run(None, None, address_gen).await {
+            print_error!(module_path!(), "Failed to start logging server: {}", e);
+        }
+    });
+
+    Ok(server_handle)
+}
+
+async fn spawn_websocket_server(
+    router: &mut Router<Address>,
+    listener: TcpListener,
+) -> anyhow::Result<JoinHandle<()>> {
+    let server_agent = router.new_agent(None, Address::WebsocketServer)?;
+    let server = WsServer::new(listener, server_agent);
+
+    let server_handle = spawn(async move {
+        let mut id = 0;
+        let address_gen = || {
+            id += 1;
+            Address::WebsocketCon(id)
         };
         if let Err(e) = server.run(None, address_gen).await {
             print_error!(module_path!(), "Failed to start logging server: {}", e);
@@ -164,16 +189,24 @@ async fn spawn_server<L: Listener + Send + 'static>(
 // -----------------------------------------------------------------------------
 async fn spawn_uds(router: &mut Router<Address>, socket_path: &str) -> anyhow::Result<JoinHandle<()>> {
     let _ = remove_file(socket_path);
-    let listener = UdsListener::bind(socket_path).await?;
-    spawn_server(router, listener, Address::UdsServer, false).await
+    let connections = UdsConnections::bind(socket_path).await?;
+    spawn_server(router, connections, Address::UdsServer, false).await
 }
 
 // -----------------------------------------------------------------------------
 //     - Tcp server -
 // -----------------------------------------------------------------------------
 async fn spawn_tcp(router: &mut Router<Address>, addr: &str) -> anyhow::Result<JoinHandle<()>> {
-    let listener = TcpListener::bind(addr).await?;
-    spawn_server(router, listener, Address::TcpServer, true).await
+    let connections = TcpConnections::bind(addr).await?;
+    spawn_server(router, connections, Address::TcpServer, true).await
+}
+
+// -----------------------------------------------------------------------------
+//     - Websocket server -
+// -----------------------------------------------------------------------------
+async fn spawn_websocket(router: &mut Router<Address>, addr: &str) -> anyhow::Result<JoinHandle<()>> {
+    let websocket = TcpListener::bind(addr).await?;
+    spawn_websocket_server(router, websocket).await
 }
 
 // -----------------------------------------------------------------------------
@@ -188,7 +221,7 @@ async fn async_main() -> anyhow::Result<()> {
     let mut router = Router::new();
 
     // Agents
-    let log_agent = router.new_agent(1024, Address::Log)?;
+    let log_agent = router.new_agent(None, Address::Log)?;
 
     let mut server_handles = vec![];
 
@@ -206,6 +239,11 @@ async fn async_main() -> anyhow::Result<()> {
             Some(addr) => server_handles.push(spawn_uds(&mut router, &addr).await?),
             None => print_error!(module_path!(), "Socket path missing from config"),
         }
+    }
+
+    // Websocket server
+    if let Some(ref addr) = config.ws_addr {
+        server_handles.push(spawn_websocket(&mut router, addr).await?);
     }
 
     let handle = spawn(start_log(log_agent));

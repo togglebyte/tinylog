@@ -233,7 +233,7 @@ impl LogClient {
             loop {
                 match UdsClient::connect(socket_path).await {
                     Ok(cli) => {
-                        print_info!(module_path!(), "(Uds) Connected");
+                        // print_info!(module_path!(), "(Uds) Connected");
                         break cli;
                     }
                     Err(e) => {
@@ -253,7 +253,7 @@ impl LogClient {
             loop {
                 match TcpClient::connect(addr).await {
                     Ok(cli) => {
-                        print_info!(module_path!(), "(Tcp) Connected");
+                        // print_info!(module_path!(), "(Tcp) Connected");
                         break cli;
                     }
                     Err(e) => {
