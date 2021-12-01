@@ -22,7 +22,7 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
         if config.enable_tcp {
             match config.tcp_addr {
                 Some(addr) => handles.push(spawn(async move {
-                    let cli = tinylog::LogClient::connect_tcp(&addr).await;
+                    let cli = tinylog::LogClient::connect_tcp(&addr, false).await;
                     if let Err(e) = start_client(cli, filter).await {
                         print_error!(module_path!(), "Failed to start log client: {}", e);
                     }
@@ -37,7 +37,7 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
     if config.enable_uds && !config.enable_tcp {
         match config.socket {
             Some(socket) => handles.push(spawn(async move {
-                let cli = tinylog::LogClient::connect_uds(&socket).await;
+                let cli = tinylog::LogClient::connect_uds(&socket, false).await;
                 if let Err(e) = start_client(cli, filter).await {
                     print_error!(module_path!(), "Failed to start log client: {}", e);
                 }

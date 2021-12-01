@@ -225,19 +225,19 @@ impl<A: ToAddress, C: Client> Logger<A, C> {
 pub struct LogClient {
     rx: ClientReceiver,
     tx: ClientSender,
+    no_stdout: bool,
 }
 
 impl LogClient {
-    pub async fn connect_uds(socket_path: &str) -> Self {
+    pub async fn connect_uds(socket_path: &str, no_stdout: bool) -> Self {
         let uds_client = {
             loop {
                 match UdsClient::connect(socket_path).await {
-                    Ok(cli) => {
-                        // print_info!(module_path!(), "(Uds) Connected");
-                        break cli;
-                    }
+                    Ok(cli) => break cli,
                     Err(e) => {
-                        print_error!(module_path!(), "Failed to connect: {}", e);
+                        if !no_stdout {
+                            print_error!(module_path!(), "Failed to connect: {}", e);
+                        }
                         sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -245,19 +245,18 @@ impl LogClient {
         };
 
         let (tx, rx) = connect(uds_client, None);
-        LogClient { tx, rx }
+        LogClient { tx, rx, no_stdout }
     }
 
-    pub async fn connect_tcp(addr: &str) -> Self {
+    pub async fn connect_tcp(addr: &str, no_stdout: bool) -> Self {
         let tcp_client = {
             loop {
                 match TcpClient::connect(addr).await {
-                    Ok(cli) => {
-                        // print_info!(module_path!(), "(Tcp) Connected");
-                        break cli;
-                    }
+                    Ok(cli) => break cli,
                     Err(e) => {
-                        print_error!(module_path!(), "Failed to connect: {}", e);
+                        if !no_stdout {
+                            print_error!(module_path!(), "Failed to connect: {}", e);
+                        }
                         sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -265,14 +264,16 @@ impl LogClient {
         };
 
         let (tx, rx) = connect(tcp_client, None);
-        LogClient { tx, rx }
+        LogClient { tx, rx, no_stdout }
     }
 
     pub fn send(&mut self, request: Request) -> Result<()> {
         let bytes = serde_json::to_vec(&request)?;
         let msg = ClientMessage::channel_payload(b"log", &bytes);
         if let Err(e) = self.tx.send(msg) {
-            print_error!(module_path!(), "Failed to send request: {}", e);
+            if !self.no_stdout {
+                print_error!(module_path!(), "Failed to send request: {}", e);
+            }
         }
 
         Ok(())
@@ -310,7 +311,9 @@ impl Log for TinyLogger {
             );
 
             if let Err(e) = self.client.lock().map(|mut c| c.send(Request::Log(log_entry))) {
-                eprintln!("Failed to aquire client lock: {}", e);
+                if !self.client.lock().map(|c| c.no_stdout).unwrap_or(false) {
+                    eprintln!("Failed to aquire client lock: {}", e);
+                }
             }
         }
     }
@@ -321,26 +324,9 @@ impl Log for TinyLogger {
 // -----------------------------------------------------------------------------
 //     - Logging connection -
 // -----------------------------------------------------------------------------
-pub async fn init_logger_async() -> anyhow::Result<()> {
-    // let client = LogClient::connect_tcp("127.0.0.1:5566").await;
-    let client = LogClient::connect_uds("/tmp/tinylog.sock").await;
-    let tiny_logger = Box::new(TinyLogger { client: std::sync::Mutex::new(client) });
-    let tiny_logger = Box::leak(tiny_logger);
-
-    let max_level = LevelFilter::Info;
-
-    let logger = log::set_logger(tiny_logger);
-
-    if logger.is_ok() {
-        log::set_max_level(max_level);
-    }
-
-    Ok(())
-}
-
-pub async fn init_logger() -> anyhow::Result<()> {
-    let client = LogClient::connect_tcp("127.0.0.1:5566").await;
-    // let client = LogClient::connect_uds("/tmp/tinylog.sock").await;
+pub async fn init_logger(no_stdout: bool) -> anyhow::Result<()> {
+    let client = LogClient::connect_tcp("127.0.0.1:5566", no_stdout).await;
+    // let client = LogClient::connect_uds("/tmp/tinylog.sock", no_stdout).await;
     let tiny_logger = Box::new(TinyLogger { client: std::sync::Mutex::new(client) });
     let tiny_logger = Box::leak(tiny_logger);
 
