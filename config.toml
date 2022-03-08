@@ -1,6 +1,6 @@
 tcp_addr = "127.0.0.1:5566"
 ws_addr = "127.0.0.1:5567"
 socket = "/tmp/tinylog.socket"
-enable_uds = true
+enable_uds = false
 enable_tcp = true
-enable_ws = true
+enable_ws = false

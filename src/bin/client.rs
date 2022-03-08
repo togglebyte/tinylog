@@ -1,13 +1,14 @@
 use tinylog::config::Config;
 use tinylog::{print_error, Filter, LevelFilter, Request};
-use tinyroute::{spawn, block_on};
+use tokio::spawn;
 
 async fn start_client(mut client: tinylog::LogClient, filter: Option<Filter>) -> anyhow::Result<()> {
     client.send(Request::Subscribe(filter.clone()))?;
-    client.send(Request::Tail(100, filter))?;
+    client.send(Request::Tail(100, filter.clone()))?;
 
+    let show_path = filter.map(|f| f.show_path).unwrap_or(true);
     while let Ok(entry) = client.recv().await {
-        entry.print(true);
+        entry.print(true, show_path);
     }
 
     Ok(())
@@ -73,6 +74,7 @@ fn filter_from_args() -> Option<Filter> {
     while let Some(arg) = args.next() {
         match arg.as_ref() {
             "-m" => filter.modules.push(args.next()?),
+            "-p" => filter.show_path = false,
             "-l" => {
                 let level = args.next()?;
                 let level = match level.as_ref() {
@@ -93,5 +95,11 @@ fn filter_from_args() -> Option<Filter> {
 }
 
 fn main() {
-    let _ = block_on(async_main());
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            async_main().await.unwrap();
+        });
 }

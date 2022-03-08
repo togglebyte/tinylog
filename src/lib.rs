@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use termcolor::{ColorChoice, ColorSpec, StandardStream, WriteColor};
 use tinyroute::client::{connect, Client, ClientMessage, ClientReceiver, ClientSender, TcpClient, UdsClient};
 use tinyroute::frame::Frame;
-use tinyroute::{Agent, Message, ToAddress, sleep};
+use tinyroute::{Agent, Message, ToAddress};
+use tokio::time::sleep;
 
 pub use termcolor::Color;
 
@@ -77,11 +78,12 @@ pub fn with_prompt(color: Color, prompt: &str, module_path: &str, s: std::fmt::A
 pub struct Filter {
     pub level: Option<LevelFilter>,
     pub modules: Vec<String>,
+    pub show_path: bool,
 }
 
 impl Filter {
     pub fn empty() -> Filter {
-        Filter { level: None, modules: Vec::new() }
+        Filter { level: None, modules: Vec::new(), show_path: true }
     }
 
     pub fn apply(&self, entry: &LogEntry<Saved>) -> bool {
@@ -125,7 +127,7 @@ pub struct LogEntry<T> {
 }
 
 impl LogEntry<Saved> {
-    pub fn print(&self, print_full: bool) {
+    pub fn print(&self, print_full: bool, show_path: bool) {
         let mut message = self.message.clone();
         if !print_full {
             message.truncate(120);
@@ -133,11 +135,13 @@ impl LogEntry<Saved> {
 
         let mut output = format!("{:04} | {}", self.state.0, self.timestamp.format("%H:%M:%S"));
 
-        if let (Some(file), Some(line)) = (&self.file, self.line) {
-            write!(&mut output, "| {}:{}", file, line).expect("Failed to write to a string?!?!");
+        if show_path {
+            if let (Some(file), Some(line)) = (&self.file, self.line) {
+                write!(&mut output, " | {}:{}", file, line).expect("Failed to write to a string?!?!");
+            }
         }
 
-        write!(&mut output, "| {}", message).expect("Failed to write to a string?!?!");
+        write!(&mut output, " | {}", message).expect("Failed to write to a string?!?!");
 
         match self.level {
             Level::Error => print_error!(&self.module, "{}", output),

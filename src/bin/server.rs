@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::fs::remove_file;
 
-use tinyroute::server::{Connections, Server, TcpConnections, UdsConnections, TcpListener};
-use tinyroute::{Agent, Message, Router, ToAddress, spawn, block_on};
-use tinyroute::task::JoinHandle;
+use tinyroute::server::{Connections, Server, TcpConnections, UdsConnections};
+use tinyroute::{Agent, Message, Router, ToAddress};
+use tokio::task::JoinHandle;
 
 use tinylog::config::Config;
 use tinylog::{print_error, LogEntry, Request, Saved, Filter, Unsaved};
@@ -145,7 +145,7 @@ async fn spawn_server<C: Connections + Send + 'static>(
 
     let server = Server::new(connections, server_agent);
 
-    let server_handle = spawn(async move {
+    let server_handle = tokio::spawn(async move {
         let mut id = match upper_half {
             true => usize::MAX / 2,
             false => 0,
@@ -211,7 +211,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
     }
 
-    let handle = spawn(start_log(log_agent));
+    let handle = tokio::spawn(start_log(log_agent));
     router.run().await;
     for handle in server_handles {
         let _ = handle.await;
@@ -222,5 +222,11 @@ async fn async_main() -> anyhow::Result<()> {
 }
 
 fn main() {
-    let _ = block_on(async_main());
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            async_main().await.unwrap();
+        });
 }
