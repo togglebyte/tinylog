@@ -1,23 +1,23 @@
 use std::io::Write as _;
 use std::fmt::Write as _;
 use std::time::Duration;
+use std::thread;
 
 use chrono::{DateTime, Local};
 pub use log::{Level, LevelFilter};
 use log::{Log, Metadata, Record};
 use serde::{Deserialize, Serialize};
 use termcolor::{ColorChoice, ColorSpec, StandardStream, WriteColor};
-use tinyroute::client::{connect, Client, ClientMessage, ClientReceiver, ClientSender, TcpClient, UdsClient};
+use tinyroute::client_sync::{connect, Client, ClientMessage, ClientReceiver, ClientSender, TcpClient, UdsClient};
 use tinyroute::frame::Frame;
 use tinyroute::{Agent, Message, ToAddress};
-use tokio::time::sleep;
 
 pub use termcolor::Color;
 
 pub mod config;
-mod errors;
+mod error;
 
-pub use crate::errors::{Error, Result};
+pub use crate::error::{Error, Result};
 
 // -----------------------------------------------------------------------------
 //     - Internal printing macros -
@@ -101,10 +101,10 @@ impl Filter {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Saved(usize);
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Unsaved;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,7 +115,7 @@ pub enum Request {
     // Get(usize),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LogEntry<T> {
     pub level: Level,
     pub message: String,
@@ -150,6 +150,10 @@ impl LogEntry<Saved> {
             Level::Debug => print_info!(&self.module, "{}", output),
             Level::Trace => print_info!(&self.module, "{}", output),
         }
+    }
+
+    pub fn id(&self) -> usize {
+        self.state.0
     }
 }
 
@@ -197,11 +201,11 @@ impl<A: ToAddress, C: Client> Logger<A, C> {
         Ok(inst)
     }
 
-    pub async fn run(self) {
+    pub fn run(self) {
         let Self { mut agent, client } = self;
-        let (tx, _rx) = connect(client, None);
+        let (tx, _rx) = connect(client, None).unwrap();
 
-        while let Ok(Message::Value(log_entry, _)) = agent.recv().await {
+        while let Ok(Message::Value(log_entry, _)) = agent.recv_sync() {
             let entry = Request::Log(log_entry);
             let bytes = match serde_json::to_vec(&entry) {
                 Err(e) => {
@@ -233,41 +237,43 @@ pub struct LogClient {
 }
 
 impl LogClient {
-    pub async fn connect_uds(socket_path: &str, no_stdout: bool) -> Self {
+    pub fn connect_uds(socket_path: &str, no_stdout: bool) -> Self {
         let uds_client = {
             loop {
-                match UdsClient::connect(socket_path).await {
+                match UdsClient::connect(socket_path) {
                     Ok(cli) => break cli,
                     Err(e) => {
                         if !no_stdout {
                             print_error!(module_path!(), "Failed to connect: {}", e);
                         }
-                        sleep(Duration::from_secs(1)).await;
+                        thread::sleep(Duration::from_secs(1));
                     }
                 }
             }
         };
 
-        let (tx, rx) = connect(uds_client, None);
+        // TODO: unwrap
+        let (tx, rx) = connect(uds_client, None).unwrap();
         LogClient { tx, rx, no_stdout }
     }
 
-    pub async fn connect_tcp(addr: &str, no_stdout: bool) -> Self {
+    pub fn connect_tcp(addr: &str, no_stdout: bool) -> Self {
         let tcp_client = {
             loop {
-                match TcpClient::connect(addr).await {
+                match TcpClient::connect(addr) {
                     Ok(cli) => break cli,
                     Err(e) => {
                         if !no_stdout {
                             print_error!(module_path!(), "Failed to connect: {}", e);
                         }
-                        sleep(Duration::from_secs(1)).await;
+                        thread::sleep(Duration::from_secs(1));
                     }
                 }
             }
         };
 
-        let (tx, rx) = connect(tcp_client, None);
+        // TODO: unwrap
+        let (tx, rx) = connect(tcp_client, None).unwrap();
         LogClient { tx, rx, no_stdout }
     }
 
@@ -283,8 +289,8 @@ impl LogClient {
         Ok(())
     }
 
-    pub async fn recv(&mut self) -> Result<LogEntry<Saved>> {
-        let bytes = self.rx.recv_async().await.map_err(tinyroute::errors::Error::RecvErr)?;
+    pub fn recv(&mut self) -> Result<LogEntry<Saved>> {
+        let bytes = self.rx.recv().map_err(tinyroute::errors::Error::RecvErr)?;
         let entry = serde_json::from_slice::<LogEntry<Saved>>(&bytes)?;
         Ok(entry)
     }
@@ -328,8 +334,8 @@ impl Log for TinyLogger {
 // -----------------------------------------------------------------------------
 //     - Logging connection -
 // -----------------------------------------------------------------------------
-pub async fn init_logger(no_stdout: bool) -> anyhow::Result<()> {
-    let client = LogClient::connect_tcp("127.0.0.1:5566", no_stdout).await;
+pub fn init_logger(no_stdout: bool) -> anyhow::Result<()> {
+    let client = LogClient::connect_tcp("127.0.0.1:5566", no_stdout);
     // let client = LogClient::connect_uds("/tmp/tinylog.sock", no_stdout).await;
     let tiny_logger = Box::new(TinyLogger { client: std::sync::Mutex::new(client) });
     let tiny_logger = Box::leak(tiny_logger);

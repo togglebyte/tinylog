@@ -1,20 +1,21 @@
+use std::thread;
+
 use tinylog::config::Config;
 use tinylog::{print_error, Filter, LevelFilter, Request};
-use tokio::spawn;
 
-async fn start_client(mut client: tinylog::LogClient, filter: Option<Filter>) -> anyhow::Result<()> {
+fn start_client(mut client: tinylog::LogClient, filter: Option<Filter>) -> anyhow::Result<()> {
     client.send(Request::Subscribe(filter.clone()))?;
     client.send(Request::Tail(100, filter.clone()))?;
 
     let show_path = filter.map(|f| f.show_path).unwrap_or(true);
-    while let Ok(entry) = client.recv().await {
+    while let Ok(entry) = client.recv() {
         entry.print(true, show_path);
     }
 
     Ok(())
 }
 
-async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
+fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
     let mut handles = vec![];
 
     // Tcp client
@@ -22,9 +23,9 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
         let filter = filter.clone();
         if config.enable_tcp {
             match config.tcp_addr {
-                Some(addr) => handles.push(spawn(async move {
-                    let cli = tinylog::LogClient::connect_tcp(&addr, false).await;
-                    if let Err(e) = start_client(cli, filter).await {
+                Some(addr) => handles.push(thread::spawn(move|| {
+                    let cli = tinylog::LogClient::connect_tcp(&addr, false);
+                    if let Err(e) = start_client(cli, filter) {
                         print_error!(module_path!(), "Failed to start log client: {}", e);
                     }
                 })),
@@ -37,9 +38,9 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
     // Only enable the uds client if the tcp client is disabled
     if config.enable_uds && !config.enable_tcp {
         match config.socket {
-            Some(socket) => handles.push(spawn(async move {
-                let cli = tinylog::LogClient::connect_uds(&socket, false).await;
-                if let Err(e) = start_client(cli, filter).await {
+            Some(socket) => handles.push(thread::spawn(move || {
+                let cli = tinylog::LogClient::connect_uds(&socket, false);
+                if let Err(e) = start_client(cli, filter) {
                     print_error!(module_path!(), "Failed to start log client: {}", e);
                 }
             })),
@@ -48,23 +49,10 @@ async fn run(config: Config, filter: Option<Filter>) -> anyhow::Result<()> {
     }
 
     for handle in handles {
-        let _ = handle.await;
+        let _ = handle.join();
     }
 
     Ok(())
-}
-
-async fn async_main() -> anyhow::Result<()> {
-    let config = Config::new()?;
-    config.print();
-
-    let filter = filter_from_args();
-
-    loop {
-        if let Err(e) = run(config.clone(), filter.clone()).await {
-            print_error!(module_path!(), "Failed to start log client: {}", e);
-        }
-    }
 }
 
 fn filter_from_args() -> Option<Filter> {
@@ -94,12 +82,15 @@ fn filter_from_args() -> Option<Filter> {
     Some(filter)
 }
 
-fn main() {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            async_main().await.unwrap();
-        });
+fn main() -> anyhow::Result<()> {
+    let config = Config::new()?;
+    config.print();
+
+    let filter = filter_from_args();
+
+    loop {
+        if let Err(e) = run(config.clone(), filter.clone()) {
+            print_error!(module_path!(), "Failed to start log client: {}", e);
+        }
+    }
 }

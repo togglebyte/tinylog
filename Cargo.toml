@@ -13,5 +13,6 @@ serde = { version = "1.0.130", features = ["derive"] }
 serde_json = "1.0.68"
 termcolor = "1.1.2"
 thiserror = "1.0.29"
-tinyroute = { git = "https://github.com/togglebyte/tinyroute" }
+# tinyroute = { git = "https://github.com/togglebyte/tinyroute" }
+tinyroute = { path = "../tinyroute" }
 tokio = "1.17.0"
